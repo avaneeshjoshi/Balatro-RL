@@ -2,7 +2,7 @@
 <br />
 <h1>
 <p align="center">
-  <img src="./assets/balatro.png" alt="Logo" width="140" height="110">
+  <img src="./assets/balatro.png" alt="Logo" width="140" height="140">
   <br>Balatro RL Agent
 </h1>
   <p align="center">
@@ -34,4 +34,4 @@ This is a _Reinforcement Learning agent_ that attempts to play **Balatro** throu
 ## How It Works
 
 ## Credits
-- Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the injector code.
+- Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the Love2D Injector code.
