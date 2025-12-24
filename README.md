@@ -2,7 +2,7 @@
 <br />
 <h1>
 <p align="center">
-  <img src="./assets/balatro-logo.png" alt="Logo" width="140" height="110">
+  <img src="./assets/balatro.png" alt="Logo" width="140" height="110">
   <br>Balatro RL Agent
 </h1>
   <p align="center">
