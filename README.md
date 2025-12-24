@@ -4,8 +4,8 @@ This is a Reinforcement Learning agent that attempts to play Balatro through Dee
 
 ## Table of Contents
 
-[Overview](#overview)
-[How It Works](#how-it-works)
+- [Overview](#overview)
+- [How It Works](#how-it-works)
 
 ## Overview
 
