@@ -32,6 +32,15 @@ This is a _Reinforcement Learning agent_ that attempts to play **Balatro** throu
 ## Overview
 
 ## How It Works
+- Initial Setup:
+
+I am using the steam version of the game so follow the Lovely Injector instructions first. After that set the launch options in steam as --dump-all.
+
+Essentially what this does is it uses the Lovely Injector to dump all the game files and then we can search them to see how game info is handled. To find your dump folder on **Windows** go to _AppData\Roaming\Balatro\Mods\lovely\dump_. Since the dump contains the game files we can just open this into VS Code and do _Ctrl+Shift+F_ or _Cmd+Shift+F_ to search through all the game files at once to see stuff like: 1. How score is handled, 2. What happens when you play a hand, etc.
+
+Once you have openned the **dump** folder in VS Code, you will see a bunch of Lua files. These are all the important game files that show how logic is handled.
+
+We will make a Symlink between the bridge folder here and the bridge folder in the Lovely Mods directory.
 
 ## Credits
 - Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the Love2D Injector code.
