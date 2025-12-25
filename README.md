@@ -44,3 +44,7 @@ We will make a Symlink between the bridge folder here and the bridge folder in t
 
 ## Credits
 - Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the Love2D Injector code.
+
+## License
+
+This project is open source and available under the MIT License.
