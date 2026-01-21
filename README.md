@@ -206,6 +206,13 @@ Agent decides action → Agent writes command.json → Bridge reads → Bridge s
 4. **Safe Execution**: Uses `pcall()` to wrap state dumps, preventing crashes from unexpected game state
 5. **Command Cleanup**: Deletes command files immediately after reading to prevent duplicate executions
 
+## Roadmap
+- [x] Bidirectional Communication Bridge (Lua/Python)
+- [x] State Reflection (Direct Memory Access)
+- [ ] Feature Encoding (Numerical Vectorization)
+- [ ] Imitation Learning (Behavioral Cloning from Human Play)
+- [ ] Gymnasium Environment Wrapper
+
 ## Credits
 - Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the Love2D Injector code.
 
