@@ -11,25 +11,24 @@
     </p>
 </p>
 <p align="center">
-  <a href="#about-the-project">About The Project</a> •
-  <a href="#usage">Overview</a> •
-  <a href="#examples">How It Works</a> •
+  <a href="#overview">Overview</a> •
+  <a href="#how-it-works">How It Works</a> •
   <a href="#credits">Credits</a>
 </p>  
 
-<table>
-<tr>
-<td>
-
-This is a _Reinforcement Learning agent_ that attempts to play **Balatro** through Deep Learning. The agent utilizes the **Lovely Injector** to inject into the **Love2D** engine-based game to read different states. (Will add more info as I learn more about the architecture of the agent)
-
-</td>
-</tr>
-</table>
-
-## About The Project
-
 ## Overview
+
+This project creates an AI agent that learns to play and beat Balatro by:
+
+- Injecting Lua code into the Love2D game engine using the Lovely Injector mod system
+- Monitoring game state in real-time through direct memory access (money, chips, hands remaining, discards remaining, current hand cards)
+- Converting game state into normalized feature vectors to feed into the neural network
+- Using reinforcement learning (PPO - Proximal Policy Optimization) to learn optimal card selection and play strategies
+- Executing actions through a bidirectional file-based communication protocol (JSON commands for playing or discarding cards)
+
+The agent observes the game through a state vector that encodes game phase, player resources (money, chips, blind target), remaining hands and discards, and the current hand composition (card values, suits, and positions). This normalized state vector is fed into the neural network to determine which cards to play or discard to maximize score and progress through rounds.
+
+The RL model focuses specifically on learning optimal hand play strategies within antes—maximizing hand value by selecting which cards to play or discard each turn. It does not handle inter-round decisions such as selecting power-ups or shop purchases, concentrating instead on mastering the core card selection mechanics that determine success within each ante.
 
 ## How It Works
 - Initial Setup:
@@ -209,12 +208,14 @@ Agent decides action → Agent writes command.json → Bridge reads → Bridge s
 ## Roadmap
 - [x] Bidirectional Communication Bridge (Lua/Python)
 - [x] State Reflection (Direct Memory Access)
-- [ ] Feature Encoding (Numerical Vectorization)
+- [x] Feature Encoding (Numerical Vectorization)
 - [ ] Imitation Learning (Behavioral Cloning from Human Play)
 - [ ] Gymnasium Environment Wrapper
 
 ## Credits
 - Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the Love2D Injector code.
+- Credit to [Stable-Baseline3](https://github.com/DLR-RM/stable-baselines3) for PPO implementation
+- Credit to [Gymnasium](https://gymnasium.farama.org/) for the RL environment framework
 
 ## License
 
