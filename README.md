@@ -28,7 +28,14 @@ This project creates an AI agent that learns to play and beat Balatro by:
 
 The agent observes the game through a state vector that encodes game phase, player resources (money, chips, blind target), remaining hands and discards, and the current hand composition (card values, suits, and positions). This normalized state vector is fed into the neural network to determine which cards to play or discard to maximize score and progress through rounds.
 
-The RL model focuses specifically on learning optimal hand play strategies within antes—maximizing hand value by selecting which cards to play or discard each turn. It does not handle inter-round decisions such as selecting power-ups or shop purchases, concentrating instead on mastering the core card selection mechanics that determine success within each ante.
+### Scope: blind-round card score only
+
+The RL model is **only** for maximizing card score during the actual blind rounds in each ante:
+
+- **In scope:** Small blind, big blind (and boss blind) — the rounds where you play or discard cards to meet the chip target. The agent learns which cards to play or discard each turn to maximize chips.
+- **Out of scope:** All power-up and meta decisions: shop purchases, joker/tarot/planet selection, booster packs, skip/leave shop, etc. Those are not modeled; the agent assumes a fixed loadout and only acts during hand selection.
+
+So the goal is to master **in-round card selection** (play vs discard, which cards to pick), not deck building or power-up choices.
 
 ## How It Works
 - Initial Setup:
@@ -116,7 +123,24 @@ PPO Agent writes → command.json → Bridge reads → Bridge executes → Game 
 
 **Game → Agent (Observations)**:
 ```
-Game state changes → Bridge detects → Bridge dumps state (console/logs) → Agent reads
+Game state changes → Bridge detects → Bridge writes state.json → Agent reads state.json
+```
+The bridge writes `state.json` (and still prints to console) whenever state changes in `SELECTING_HAND`. The Python agent reads this file to get the current observation.
+
+**State file format** (`state.json`):
+```json
+{
+  "phase": 4,
+  "money": 150,
+  "chips": 0,
+  "blind_chips": 300,
+  "hands_left": 4,
+  "discards_left": 3,
+  "hand": [
+    {"index": 1, "value": "A", "suit": "Spades"},
+    {"index": 2, "value": "K", "suit": "Hearts"}
+  ]
+}
 ```
 
 The command file format:
@@ -148,7 +172,7 @@ The command file format:
                        │
 ┌──────────────────────▼──────────────────────────────────────────┐
 │                    File System                                  │
-│              command.json (temporary)                           │
+│              state.json (bridge→agent)  command.json (agent→bridge) │
 └──────────────────────┬──────────────────────────────────────────┘
                        │
                        │ reads & deletes
@@ -165,8 +189,8 @@ The command file format:
 │  │  │  • Parse action  │  │                             │   │   │
 │  │  │  • Select cards  │  │  ┌───────────────────────┐  │   │   │
 │  │  │  • Execute cmd   │  │  │ dump_game_state()     │  │   │   │
-│  │  │  • Delete file   │  │  │  • Print state info   │  │   │   │
-│  │  └──────────────────┘  │  │  • Format output      │  │   │   │
+│  │  │  • Delete file   │  │  │ write_state_json()    │  │   │   │
+│  │  └──────────────────┘  │  │  • Print + state.json │  │   │   │
 │  │                        │  └───────────────────────┘  │   │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └──────────────────────┬──────────────────────────────────────────┘
@@ -191,7 +215,7 @@ The command file format:
 └─────────────────────────────────────────────────────────────────┘
 
 Observation Flow (Game → Agent):
-Game State → Bridge detects change → Bridge prints/logs state → Agent reads logs/file
+Game State → Bridge detects change → Bridge writes state.json → Agent reads state.json
 
 Action Flow (Agent → Game):
 Agent decides action → Agent writes command.json → Bridge reads → Bridge selects cards → Bridge executes → Game updates
@@ -205,12 +229,38 @@ Agent decides action → Agent writes command.json → Bridge reads → Bridge s
 4. **Safe Execution**: Uses `pcall()` to wrap state dumps, preventing crashes from unexpected game state
 5. **Command Cleanup**: Deletes command files immediately after reading to prevent duplicate executions
 
+## Running the Python environment
+
+1. **Symlink** the repo `bridge` folder into the Lovely Mods directory and run Balatro (with the bridge injected) so that `state.json` is written to `bridge/`.
+2. **Install dependencies**: `pip install -r requirements.txt`
+3. **Run the example** (random agent, 20 steps): `python run_env_example.py`  
+   Optionally set `BALATRO_BRIDGE_DIR` to the full path of the bridge folder if it differs from the repo.
+4. Use **Gymnasium** in your own scripts:
+   ```python
+   from env import BalatroEnv
+   env = BalatroEnv(bridge_dir="path/to/bridge")
+   obs, info = env.reset()
+   action = env.action_space.sample()  # or your policy
+   obs, reward, term, trunc, info = env.step(action)
+   ```
+   **Observation** is a 60-dim normalized float32 vector: phase, money, chips, blind_chips, hands/discards left, per-card present/value/suit for up to 8 cards, then per hand type (High Card through Royal Flush) the level/chips/mult from `G.GAME.hands` when the bridge sends `hand_levels`. **Reward** is shaped: chip delta + discard penalty + win bonus (when chips ≥ blind), plus an optional hand-type bonus when the bridge sends `last_hand_type`. **Action** is `MultiDiscrete`: play (0) vs discard (1), then 8 bits for which cards (1-based indices).
+
+## Recording expert data (for Imitation Learning)
+
+To collect (observation, action) pairs while you play, run the recorder and type actions at the prompt:
+
+```bash
+python record_expert.py --output expert_data.jsonl
+```
+
+With Balatro on a hand-selection screen, the script shows the hand and waits for input. Type e.g. `play 1,2,3` or `discard 4,5` (1-based indices; max 5 cards for play). Each pair is appended as one JSON line: `{"obs": [...], "action": [...]}` (same format as the env). Use this `.jsonl` file to train a Behavioral Cloning policy later.
+
 ## Roadmap
 - [x] Bidirectional Communication Bridge (Lua/Python)
 - [x] State Reflection (Direct Memory Access)
 - [x] Feature Encoding (Numerical Vectorization)
+- [x] Gymnasium Environment Wrapper
 - [ ] Imitation Learning (Behavioral Cloning from Human Play)
-- [ ] Gymnasium Environment Wrapper
 
 ## Credits
 - Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the Love2D Injector code.

@@ -1,0 +1,13 @@
+# Bridge runtime files (created by game / agent)
+bridge/state.json
+bridge/command.json
+
+# Recorded expert data (for imitation learning)
+expert_data.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
