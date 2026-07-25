@@ -19,3 +19,9 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# Local agent guidance (keep local, do not publish)
+AGENTS.md
+
+# Local README PDF copy (keep local, do not publish)
+README.pdf
