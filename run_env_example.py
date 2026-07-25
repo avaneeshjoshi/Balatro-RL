@@ -38,14 +38,14 @@ def _hand_str(raw: dict | None) -> str:
     return "hand: " + ", ".join(parts)
 
 
-def sample_valid_action(hand_size: int) -> np.ndarray:
+def sample_valid_action(hand_size: int, discards_left: int) -> np.ndarray:
     """
     Sample a random action that respects hand size and Balatro rules:
     - Play: 1 to min(5, hand_size) cards; indices only from 1..hand_size.
     - Discard: 1 to hand_size cards; indices only from 1..hand_size.
     """
     hand_size = max(1, min(hand_size, NUM_CARD_SLOTS))
-    play_or_discard = random.randint(0, 1)  # 0 = play, 1 = discard
+    play_or_discard = random.randint(0, 1) if discards_left > 0 else 0
     if play_or_discard == 0:
         # Play: at most MAX_PLAY_CARDS (5), at least 1
         n_cards = random.randint(1, min(MAX_PLAY_CARDS, hand_size))
@@ -75,9 +75,10 @@ def main() -> None:
     for t in range(20):
         raw = info.get("raw_state")
         hand_size = len((raw or {}).get("hand") or [])
+        discards_left = int((raw or {}).get("discards_left", 0))
         if hand_size == 0:
             hand_size = NUM_CARD_SLOTS
-        action = sample_valid_action(hand_size)
+        action = sample_valid_action(hand_size, discards_left)
         obs, reward, term, trunc, info = env.step(action)
         summary = _state_summary(info.get("raw_state"))
         print(f"Step {t+1}: reward={reward:.6f} term={term} trunc={trunc} | {summary}")

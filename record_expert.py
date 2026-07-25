@@ -10,8 +10,8 @@ Usage:
   3. When state appears, type e.g. "play 1,2,3" or "discard 4,5" (1-based indices).
   4. Type "quit" or Ctrl+C to stop.
 
-Each line in the output file is JSON: {"obs": [...], "action": [...]} with the same
-format the env uses (obs = 30-dim float vector, action = 9-dim int: play/discard + 8 card bits).
+Each line is versioned JSON containing `obs`, `action`, and the structured
+`raw_state`. New files use observation v2; an existing v1 file stays v1.
 """
 import argparse
 import json
@@ -22,8 +22,27 @@ import numpy as np
 
 from env import BalatroEnv
 from env.balatro_env import MAX_PLAY_CARDS, NUM_CARD_SLOTS
+from env.feature_encoder import observation_version_for_dimension
 
 DEFAULT_BRIDGE_DIR = Path(__file__).resolve().parent / "bridge"
+
+
+def existing_observation_version(path: Path) -> int | None:
+    """Infer an existing JSONL file's observation version from its first record."""
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as data_file:
+        for line_number, line in enumerate(data_file, start=1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+                return observation_version_for_dimension(len(record["obs"]))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Cannot determine observation version from {path}:{line_number}"
+                ) from exc
+    return None
 
 
 def parse_action_string(s: str, hand_size: int) -> np.ndarray | None:
@@ -75,13 +94,31 @@ def main() -> None:
         default=os.environ.get("BALATRO_BRIDGE_DIR", str(DEFAULT_BRIDGE_DIR)),
         help="Bridge directory (state.json / command.json)",
     )
+    parser.add_argument(
+        "--observation-version",
+        type=int,
+        choices=(1, 2),
+        help="Encoder version. Existing output files are detected; new files default to 2.",
+    )
     args = parser.parse_args()
     bridge_path = Path(args.bridge_dir).resolve()
     out_path = Path(args.output)
+    existing_version = existing_observation_version(out_path)
+    if existing_version is not None and args.observation_version not in (None, existing_version):
+        raise ValueError(
+            f"{out_path} contains observation v{existing_version}; choose another output file "
+            f"for observation v{args.observation_version}"
+        )
+    observation_version = args.observation_version or existing_version or 2
 
-    env = BalatroEnv(bridge_dir=bridge_path, state_timeout=15.0)
+    env = BalatroEnv(
+        bridge_dir=bridge_path,
+        state_timeout=15.0,
+        observation_version=observation_version,
+    )
     print(f"Bridge: {bridge_path}")
     print(f"Output: {out_path.absolute()}")
+    print(f"Observation: v{observation_version} ({env.obs_dim} values)")
     print("When you see a hand, type:  play 1,2,3   or   discard 4,5   (1-based indices). Type 'quit' to stop.\n")
 
     count = 0
@@ -100,7 +137,10 @@ def main() -> None:
             print(f"Hand ({hand_size} cards):")
             for i, c in enumerate(hand, 1):
                 print(f"  {i}: {c.get('value', '?')} of {c.get('suit', '?')}")
-            print(f"  chips={raw.get('chips')} hands_left={raw.get('hands_left')} discards_left={raw.get('discards_left')}")
+            print(
+                f"  chips={raw.get('chips')}/{raw.get('blind_chips')} "
+                f"hands_left={raw.get('hands_left')} discards_left={raw.get('discards_left')}"
+            )
             try:
                 line = input("Action (play/discard + indices)> ").strip()
             except (EOFError, KeyboardInterrupt):
@@ -113,13 +153,38 @@ def main() -> None:
             if action is None:
                 print("Invalid input. Use e.g. 'play 1,2,3' or 'discard 4,5' (1-based, max 5 for play).")
                 continue
+            if int(action[0]) == 1 and int(raw.get("discards_left", 0)) <= 0:
+                print("Invalid input. No discards remain; choose a play action.")
+                continue
+            print("Sending command...")
+            _, _, terminated, truncated, step_info = env.step(action)
+            if truncated:
+                reason = step_info.get("truncated_reason") or "unknown"
+                print(f"Action was not recorded because the bridge stopped: {reason}")
+                continue
+            if step_info.get("action_overridden"):
+                print("Action was changed by the environment and was not recorded.")
+                continue
             obs_list = obs.tolist()
             action_list = action.tolist()
-            f.write(json.dumps({"obs": obs_list, "action": action_list}) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "schema_version": 3,
+                        "observation_version": observation_version,
+                        "obs": obs_list,
+                        "action": action_list,
+                        "raw_state": raw,
+                    }
+                )
+                + "\n"
+            )
             f.flush()
             count += 1
-            print(f"Recorded #{count}. Sending command...")
-            env.step(action)
+            print(f"Recorded #{count}.")
+            if terminated:
+                reason = step_info.get("terminated_reason") or "blind_finished"
+                print(f"Round ended: {reason}")
             print()
 
     env.close()
