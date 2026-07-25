@@ -4,6 +4,14 @@ bridge/command.json
 
 # Recorded expert data (for imitation learning)
 expert_data.jsonl
+expert_data_v2.jsonl
+play_history.jsonl
+planner_play_history.jsonl
+data/
+
+# Trained policies and metrics
+models/
+logs/
 
 # Python
 __pycache__/

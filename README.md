@@ -6,7 +6,7 @@
   <br>Balatro RL Agent
 </h1>
   <p align="center">
-    A Reinforcement Learning Agent that learns to play Balatro using deep learning.
+    A live Balatro card-play agent with imitation learning, exact scoring, and an RL-ready Gymnasium bridge.
     <br />
     </p>
 </p>
@@ -18,22 +18,27 @@
 
 ## Overview
 
-This project creates an AI agent that learns to play and beat Balatro by:
+This project builds and evaluates AI agents for Balatro's in-blind card decisions by:
 
 - Injecting Lua code into the Love2D game engine using the Lovely Injector mod system
 - Monitoring game state in real-time through direct memory access (money, chips, hands remaining, discards remaining, current hand cards)
-- Converting game state into normalized feature vectors to feed into the neural network
-- Using reinforcement learning (PPO - Proximal Policy Optimization) to learn optimal card selection and play strategies
+- Converting visible game state into versioned feature vectors and planner states
+- Training behavioral-cloning and fixed-vocabulary supervised candidate policies
+- Reranking supported play actions with a deterministic Balatro scoring engine
+- Exposing a Gymnasium environment for later PPO fine-tuning
 - Executing actions through a bidirectional file-based communication protocol (JSON commands for playing or discarding cards)
 
-The agent observes the game through a state vector that encodes game phase, player resources (money, chips, blind target), remaining hands and discards, and the current hand composition (card values, suits, and positions). This normalized state vector is fed into the neural network to determine which cards to play or discard to maximize score and progress through rounds.
+The live planner observes only normally visible information. It ranks legal play
+and discard actions, then optionally reranks play candidates with the scoring
+engine. The current checkpoint is a supervised imitation baseline, not a
+finished reinforcement-learning policy; PPO remains a later fine-tuning stage.
 
 ### Scope: blind-round card score only
 
 The RL model is **only** for maximizing card score during the actual blind rounds in each ante:
 
 - **In scope:** Small blind, big blind (and boss blind) — the rounds where you play or discard cards to meet the chip target. The agent learns which cards to play or discard each turn to maximize chips.
-- **Out of scope:** All power-up and meta decisions: shop purchases, joker/tarot/planet selection, booster packs, skip/leave shop, etc. Those are not modeled; the agent assumes a fixed loadout and only acts during hand selection.
+- **Out of scope:** All power-up and meta decisions: shop purchases, joker/tarot/planet selection, booster packs, and blind skipping. Automatic progression can leave a shop without buying and select the required next blind, but it does not make deck-building decisions.
 
 So the goal is to master **in-round card selection** (play vs discard, which cards to pick), not deck building or power-up choices.
 
@@ -50,7 +55,7 @@ We will make a Symlink between the bridge folder here and the bridge folder in t
 
 ## The Bridge: Communication Layer
 
-The bridge is a **Lua-based communication layer** that enables bidirectional communication between the PPO agent and the Balatro game. It acts as an intermediary, allowing the agent to observe game state and execute actions within the game.
+The bridge is a **Lua-based communication layer** that enables bidirectional communication between Python agents and the Balatro game. It acts as an intermediary, allowing an agent to observe game state and execute actions within the game.
 
 ### What the Bridge Does
 
@@ -68,7 +73,7 @@ The bridge (`bridge/main.lua`) is injected into the game's runtime using the Lov
 
 #### 2. **Event-Based State Snapshotting**
 The bridge uses an event-driven approach to capture game state only when relevant changes occur. It triggers a state dump when:
-- **State Transition**: The game enters the `SELECTING_HAND` state (state 4), indicating the player can make decisions
+- **State Transition**: The game enters the `SELECTING_HAND` state (state 1), indicating the player can make decisions
 - **Hand Played**: The number of hands remaining decreases
 - **Cards Discarded**: The number of discards remaining decreases
 - **Hand Size Changed**: New cards are drawn or cards are removed
@@ -80,7 +85,7 @@ When triggered, the bridge outputs a formatted snapshot containing:
 - Complete hand information (card indices, values, and suits)
 
 #### 3. **Command Execution**
-The bridge continuously polls for commands from the PPO agent via a JSON file (`command.json`). When a command file is detected:
+The bridge continuously polls for commands from the Python agent via a JSON file (`command.json`). When a command file is detected:
 
 1. **Reads** the command file containing:
    - `action`: Either `"play"` or `"discard"`
@@ -118,7 +123,7 @@ The bridge implements a **file-based communication protocol**:
 
 **Agent → Game (Actions)**:
 ```
-PPO Agent writes → command.json → Bridge reads → Bridge executes → Game state changes
+Python agent writes → command.json → Bridge reads → Bridge executes → Game state changes
 ```
 
 **Game → Agent (Observations)**:
@@ -130,12 +135,29 @@ The bridge writes `state.json` (and still prints to console) whenever state chan
 **State file format** (`state.json`):
 ```json
 {
-  "phase": 4,
+  "seq": 42,
+  "state_version": 2,
+  "phase": 1,
   "money": 150,
   "chips": 0,
   "blind_chips": 300,
   "hands_left": 4,
   "discards_left": 3,
+  "round_result": "",
+  "run": {
+    "seed": "ABC123",
+    "ante": 1,
+    "deck_remaining": 44,
+    "deck_total": 52
+  },
+  "blind": {
+    "key": "bl_small",
+    "name": "Small Blind",
+    "type": "Small",
+    "boss": false,
+    "disabled": false,
+    "debuff": {}
+  },
   "hand": [
     {"index": 1, "value": "A", "suit": "Spades"},
     {"index": 2, "value": "K", "suit": "Hearts"}
@@ -151,11 +173,21 @@ The command file format:
 }
 ```
 
+With automatic progression enabled, Python may also send:
+
+```json
+{"action": "advance", "cards": []}
+```
+
+The bridge waits for Balatro's real UI controls, presses Cash Out after a win,
+leaves the shop without purchases, and selects the actual Small, Big, or Boss
+Blind button. After a loss it starts a new run with the default Red Deck.
+
 ### Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         PPO Agent (Python)                      │
+│                      Python Policy / Planner                   │
 │  ┌──────────────────┐              ┌──────────────────┐         │
 │  │  Policy Network  │              │  Value Network   │         │
 │  │  (Actor)         │              │  (Critic)        │         │
@@ -238,12 +270,12 @@ Agent decides action → Agent writes command.json → Bridge reads → Bridge s
 4. Use **Gymnasium** in your own scripts:
    ```python
    from env import BalatroEnv
-   env = BalatroEnv(bridge_dir="path/to/bridge")
+   env = BalatroEnv(bridge_dir="path/to/bridge", observation_version=2)
    obs, info = env.reset()
    action = env.action_space.sample()  # or your policy
    obs, reward, term, trunc, info = env.step(action)
    ```
-   **Observation** is a 60-dim normalized float32 vector: phase, money, chips, blind_chips, hands/discards left, per-card present/value/suit for up to 8 cards, then per hand type (High Card through Royal Flush) the level/chips/mult from `G.GAME.hands` when the bridge sends `hand_levels`. **Reward** is shaped: chip delta + discard penalty + win bonus (when chips ≥ blind), plus an optional hand-type bonus when the bridge sends `last_hand_type`. **Action** is `MultiDiscrete`: play (0) vs discard (1), then 8 bits for which cards (1-based indices).
+   **Observation v1** is the original 60-value vector and remains the default for compatibility with existing models. **Observation v2** is a 915-value visible-information vector with blind/debuff context, chip progress, run resources, poker-pattern summaries, enriched cards, hand levels, jokers, and consumables. The run seed is deliberately excluded from both policy inputs. **Reward** is shaped: chip delta + discard penalty + one hand-type bonus per scored play, with terminal bonuses for winning or losing a blind. **Action** is `MultiDiscrete`: play (0) vs discard (1), then 8 bits for which cards (1-based indices). When no discards remain, Python converts discard requests to play and Lua rejects invalid commands as a final safeguard.
 
 ## Recording expert data (for Imitation Learning)
 
@@ -253,14 +285,195 @@ To collect (observation, action) pairs while you play, run the recorder and type
 python record_expert.py --output expert_data.jsonl
 ```
 
-With Balatro on a hand-selection screen, the script shows the hand and waits for input. Type e.g. `play 1,2,3` or `discard 4,5` (1-based indices; max 5 cards for play). Each pair is appended as one JSON line: `{"obs": [...], "action": [...]}` (same format as the env). Use this `.jsonl` file to train a Behavioral Cloning policy later.
+With Balatro on a hand-selection screen, the script shows the hand and waits for input. Type e.g. `play 1,2,3` or `discard 4,5` (1-based indices; max 5 cards for play). After the bridge confirms the action, the pair is appended as one JSON line: `{"obs": [...], "action": [...]}` (same format as the env).
+
+New files default to observation v2. If the output file already contains v1
+records, the recorder detects that and continues in v1 so dimensions are never
+mixed. Use a new filename to begin a v2 dataset:
+
+```bash
+python record_expert.py --output expert_data_v2.jsonl
+```
+
+Train a behavioral-cloning policy after recording at least a small demonstration set:
+
+```bash
+python train_bc.py --data expert_data.jsonl --model-out models/balatro_bc.zip
+```
+
+The trainer validates every record, keeps a validation split, prints action/card
+accuracy, and saves the best policy plus `balatro_bc.metrics.json`. The saved
+model is a normal Stable Baselines3 PPO model, so it can later continue with PPO
+training.
+
+Run the cloned policy in a fresh blind:
+
+```bash
+python play_bc.py --model models/balatro_bc.zip
+```
+
+To run multiple card-play episodes without buying anything from shops, enable
+automatic progression:
+
+```bash
+python play_bc.py --model models/balatro_bc.zip --auto-advance --episodes 3
+```
+
+Automatic progression follows the real game flow: it presses Cash Out after a
+win, leaves shops without purchases, and selects the actual next Small, Big, or
+Boss Blind button. After a loss it follows the Game Over `New Run` flow,
+selects the default Red Deck, presses Play, and selects the Small Blind. It is
+opt-in; normal manual play is unchanged.
+
+Expert records retain the structured raw state (seed/run context, active blind
+and debuff, enriched cards, jokers, consumables, and deck counts). Playback
+prints the seed and appends each seed, blind outcome, and move sequence to
+`play_history.jsonl` for reproducibility. The seed is metadata only and is never
+passed to the policy. Training and playback infer v1 or v2 automatically from
+the dataset/model dimension; mixed-version datasets are rejected.
+
+For a first pipeline check, about 100 recorded decisions is enough. A useful
+policy will need a larger and more varied dataset covering plays, discards,
+different hand shapes, and decisions near the end of a blind.
+
+## Importing BalatroBench
+
+Normalize a downloaded BalatroBench `runs/` tree without copying screenshots,
+the repeated game guide, or hidden deck order:
+
+```bash
+python import_balatrobench.py --source "E:\balatro-data\runs\runs" --output data/balatrobench
+```
+
+The importer writes four linked JSONL tables plus `manifest.json`:
+
+- `runs.jsonl`: model, strategy, seed, deck, stake, and final outcome metadata.
+- `states.jsonl`: structured post-action snapshots with seed removed, face-down
+  hand identities masked, and remaining-deck cards sorted canonically.
+- `request_states.jsonl`: every rendered pre-action game-state block, excluding
+  the seed and repeated tool documentation.
+- `transitions.jsonl`: tool calls linked to request states and, where alignment
+  is exact, structured pre/post states.
+
+`bc_candidate` marks play/discard records with exact structured transitions.
+`text_bc_candidate` marks well-formed play/discard calls with a rendered
+`SELECTING_HAND` pre-state. Runs containing failed calls remain fully indexed,
+but the importer does not guess shifted structured-state alignment.
+
+Build compact in-blind planner examples from those normalized tables:
+
+```bash
+python build_planner_dataset.py --input data/balatrobench
+```
+
+This writes `planner_examples.jsonl` and `planner_manifest.json`. Each example
+contains a parsed visible pre-move state, the play/discard action and selected
+card snapshots, run outcome metadata, and data-quality flags. The seed is kept
+only under provenance for replay and is not part of the policy state. Where an
+exact structured pre-state exists, the manifest reports field-by-field parser
+match rates instead of silently trusting the rendered-text parser.
+
+Run the repeatable integrity audit before using a regenerated file for training:
+
+```bash
+python audit_planner_dataset.py --data data/balatrobench/planner_examples.jsonl
+```
+
+The audit checks legal actions, selected-card joins, all 12 poker-hand records,
+hidden card/Joker masking, modifier vocabularies, and seed exclusion from the
+policy state. A passing audit means the examples are structurally sound; it does
+not mean the source LLM actions are optimal. Identical visible states must stay
+in one split, and final agent evaluation must use fresh live-game seeds rather
+than randomly shuffled decisions from these five recorded seeds.
+
+Prepare the audited decisions for supervised planner training:
+
+```bash
+python prepare_planner_training_data.py
+```
+
+Preparation rejects unusable rows, merges identical visible states, aggregates
+conflicting actions into probability targets, and gives each source model equal
+vote weight. The deterministic train/validation split uses only a hash of the
+visible state; it does not use the seed. These remain unrated LLM targets until
+the legal-action scorer and rollout evaluator can assign action values.
+
+Train the frozen pre-rollout comparison baseline:
+
+```bash
+python train_planner_baseline.py --model-out models/planner_llm_baseline.pt --epochs 30
+```
+
+The policy encodes visible planner state and ranks a fixed vocabulary of 3,170
+play/discard subsets, with illegal actions masked before training and inference.
+It saves the best validation-loss checkpoint plus a sibling `.metrics.json`
+file. The seed-42 baseline selects epoch 6 and reaches `4.7244` validation NLL,
+`12.92%` exact consensus accuracy, `66.81%` play/discard-kind accuracy, and
+`29.17%` top-five target coverage on 720 validation states. Future rollout-value
+training should keep this split, encoder, model, and evaluation protocol fixed.
+
+Run that planner against the live game:
+
+```bash
+python play_planner.py --model models/planner_llm_baseline.pt --auto-advance --episodes 3
+```
+
+Restart Balatro after pulling or editing `bridge/main.lua`, open the game, and
+leave it at any normal run/blind screen. `--auto-advance` selects the default
+Red Deck after a loss, presses Cash Out after wins, leaves shops without
+purchases, selects the next blind (including Boss Blinds), and continues between
+the requested episodes. The runner logs the seed, blind, policy probabilities,
+moves, and result to `planner_play_history.jsonl`. Omit `--auto-advance` to play
+one already-open blind. By default, the model decides play versus discard and
+the deterministic scoring engine reranks supported plays to the highest-scoring
+visible subset. Pass `--policy-only` to reproduce the raw imitation-policy baseline. This
+checkpoint was trained to imitate unrated LLM actions, so discard behavior is a
+baseline until future-draw rollouts provide value targets.
+
+## Base Scoring Engine
+
+`ai_agent/scoring_engine.py` enumerates every legal 1-5 card play/discard set,
+classifies all 12 Balatro hand types, identifies scored cards, and applies base
+hand levels plus deterministic playing-card effects. Face-down selected cards
+are never guessed. Unimplemented Jokers and boss rules are returned as explicit
+`unsupported_effects`, so a baseline estimate cannot be mistaken for an exact
+label.
+
+Validate exact-eligible predictions against observed BalatroBench scores:
+
+```bash
+python validate_scoring_engine.py
+```
+
+The current base validation covers supported plays without active Joker or boss
+modifiers. The first phase-aware Joker batch adds common conditional Chips/Mult,
+per-scored-card effects, retriggers, held-card effects, Smeared Joker, Splash,
+dynamic current values, and Joker editions. Unsupported copying, probability,
+classification-changing, or stateful effects remain explicit rather than being
+approximated silently. Stochastic discard rollouts are a later engine layer.
+
+## Tests
+
+Run the complete offline test suite without starting Balatro:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Changes to `bridge/main.lua` still require a Balatro restart and a live smoke
+test because Lovely loads the Lua bridge at game startup.
 
 ## Roadmap
 - [x] Bidirectional Communication Bridge (Lua/Python)
 - [x] State Reflection (Direct Memory Access)
 - [x] Feature Encoding (Numerical Vectorization)
 - [x] Gymnasium Environment Wrapper
-- [ ] Imitation Learning (Behavioral Cloning from Human Play)
+- [x] Behavioral Cloning Training And Inference Pipeline
+- [x] Import And Validate BalatroBench In-Blind Decisions
+- [x] Implement Legal-Action Enumeration And Conservative Deterministic Scoring
+- [x] Train Pre-Rollout Candidate Policy Baseline
+- [ ] Generate Rollout Values And Retrain Candidate Policy
+- [ ] PPO Fine-Tuning
 
 ## Credits
 - Credit to [@ethangreen-dev](https://github.com/ethangreen-dev/lovely-injector) for the Love2D Injector code.
